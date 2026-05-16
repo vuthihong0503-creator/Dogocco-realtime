@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Đo Góc Cổ - vuthihong</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 1000px; width: 100%; }
+        h2 { color: #3b82f6; text-align: center; margin-bottom: 30px; letter-spacing: 1px; }
+        .dashboard { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+        .card { background: #1e1e1e; border-radius: 8px; padding: 15px; flex: 1; min-width: 220px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; border-top: 4px solid #3b82f6; }
+        .angle-display { font-size: 2.5rem; font-weight: bold; margin: 10px 0; }
+        #pitchDisplay { color: #a855f7; }
+        #rollDisplay { color: #06b6d4; }
+        .status-txt { font-size: 1.5rem; font-weight: bold; color: #f59e0b; margin-top: 10px; }
+        .status { font-weight: bold; }
+        .connected { color: #10b981; }
+        .disconnected { color: #ef4444; }
+        .chart-container { background: #1e1e1e; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .history-container { background: #1e1e1e; padding: 20px; border-radius: 8px; max-height: 280px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 10px; border-bottom: 1px solid #333; }
+        th { color: #3b82f6; }
+        button { background-color: #ef4444; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; float: right; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>HỆ THỐNG THEO DÕI GÓC CỔ REALTIME</h2>
+    
+    <div class="dashboard">
+        <div class="card">
+            <h3>Kết Nối Hệ Thống</h3>
+            <div id="status" class="status disconnected">Đang kết nối Cloud...</div>
+        </div>
+        <div class="card">
+            <h3>Góc Cúi / Ngửa (Pitch)</h3>
+            <div id="pitchDisplay" class="angle-display">0.00°</div>
+        </div>
+        <div class="card">
+            <h3>Góc Nghiêng (Roll)</h3>
+            <div id="rollDisplay" class="angle-display">0.00°</div>
+        </div>
+        <div class="card" style="border-top: 4px solid #f59e0b;">
+            <h3>Trạng Thái Tư Thế</h3>
+            <div id="poseDisplay" class="status-txt">Bình thường</div>
+        </div>
+    </div>
+
+    <div class="chart-container"><canvas id="realtimeChart"></canvas></div>
+
+    <div class="history-container">
+        <button onclick="xoaLichSu()">Xóa lịch sử</button>
+        <h3>Lịch Sử Đo Tổng Hợp</h3>
+        <table>
+            <thead><tr><th>Thời gian</th><th>Góc Cúi/Ngửa (Pitch)</th><th>Góc Nghiêng (Roll)</th><th>Tư thế nhận diện</th></tr></thead>
+            <tbody id="historyTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const mqtt_server = "broker.hivemq.com";
+    const mqtt_port = 8000; 
+    const mqtt_topic = "dogocco_2026/data"; 
+
+    let client = new Paho.MQTT.Client(mqtt_server, mqtt_port, "web_" + parseInt(Math.random() * 100, 10));
+    let gocChart;
+    const maxDataPoints = 35;
+
+    // Cấu hình đồ thị hiển thị cả 2 đường tín hiệu song song
+    const ctx = document.getElementById('realtimeChart').getContext('2d');
+    gocChart = new Chart(ctx, {
+        type: 'line',
+        data: { 
+            labels: [], 
+            datasets: [
+                { label: 'Cúi/Ngửa (Pitch) (°)', data: [], borderColor: '#a855f7', borderWidth: 2, tension: 0.2, fill: false },
+                { label: 'Nghiêng Trái/Phải (Roll) (°)', data: [], borderColor: '#06b6d4', borderWidth: 2, tension: 0.2, fill: false }
+            ] 
+        },
+        options: { responsive: true, scales: { x: { display: false }, y: { min: -70, max: 70 } } }
+    });
+
+    client.onConnectionLost = onConnectionLost;
+    client.onMessageArrived = onMessageArrived;
+    client.connect({onSuccess:onConnect, onFailure:onFailure, useSSL: false});
+
+    function onConnect() {
+        document.getElementById('status').innerText = "Đã liên kết Server đám mây";
+        document.getElementById('status').className = "status connected";
+        client.subscribe(mqtt_topic);
+    }
+    function onFailure() {
+        document.getElementById('status').innerText = "Lỗi kết nối Server";
+        setTimeout(() => client.connect({onSuccess:onConnect, onFailure:onFailure}), 5000);
+    }
+    function onConnectionLost() {
+        document.getElementById('status').innerText = "Mất kết nối Internet...";
+        document.getElementById('status').className = "status disconnected";
+    }
+
+    // Xử lý gói dữ liệu phức hợp gửi về ("Pitch,Roll")
+    function onMessageArrived(message) {
+        const dataHienTai = message.payloadString.split(',');
+        if (dataHienTai.length < 2) return;
+
+        const pitch = parseFloat(dataHienTai[0]);
+        const roll = parseFloat(dataHienTai[1]);
+        const thoiGian = new Date().toLocaleTimeString();
+
+        // 1. Cập nhật số góc lên giao diện
+        document.getElementById('pitchDisplay').innerText = pitch.toFixed(2) + '°';
+        document.getElementById('rollDisplay').innerText = roll.toFixed(2) + '°';
+
+        // 2. Thuật toán nhận diện tư thế từ góc cổ
+        let tuThe = "Bình thường";
+        if (pitch < -15) tuThe = "Cúi đầu 🔽";
+        else if (pitch > 15) tuThe = "Ngửa đầu 🔼";
+        
+        if (roll > 15) tuThe += (tuThe === "Bình thường" ? "" : " + ") + "Nghiêng phải ▶️";
+        else if (roll < -15) tuThe += (tuThe === "Bình thường" ? "" : " + ") + "Nghiêng trái ◀️";
+
+        document.getElementById('poseDisplay').innerText = tuThe;
+
+        // 3. Đẩy dữ liệu vẽ biểu đồ động song song
+        gocChart.data.labels.push(thoiGian);
+        gocChart.data.datasets[0].data.push(pitch);
+        gocChart.data.datasets[1].data.push(roll);
+        if(gocChart.data.labels.length > maxDataPoints) {
+            gocChart.data.labels.shift();
+            gocChart.data.datasets[0].data.shift();
+            gocChart.data.datasets[1].data.shift();
+        }
+        gocChart.update('none');
+
+        // 4. Lưu lịch sử đo tổng hợp vào bảng
+        luuLichSu(thoiGian, pitch, roll, tuThe);
+    }
+
+    function luuLichSu(thoiGian, pitch, roll, tuThe) {
+        let lichSu = JSON.parse(localStorage.getItem('lichSuGocCoPhucHop')) || [];
+        lichSu.unshift({ thoiGian, pitch, roll, tuThe });
+        if(lichSu.length > 120) lichSu.pop();
+        localStorage.setItem('lichSuGocCoPhucHop', JSON.stringify(lichSu));
+        hienThiBangLichSu();
+    }
+
+    function hienThiBangLichSu() {
+        const lichSu = JSON.parse(localStorage.getItem('lichSuGocCoPhucHop')) || [];
+        const tbody = document.getElementById('historyTable');
+        tbody.innerHTML = '';
+        lichSu.forEach(item => {
+            tbody.innerHTML += `<tr>
+                <td>${item.thoiGian}</td>
+                <td style="color: #a855f7">${item.pitch.toFixed(2)}°</td>
+                <td style="color: #06b6d4">${item.roll.toFixed(2)}°</td>
+                <td style="color: #f59e0b; font-weight: bold;">${item.tuThe}</td>
+            </tr>`;
+        });
+    }
+
+    function xoaLichSu() { localStorage.removeItem('lichSuGocCoPhucHop'); hienThiBangLichSu(); }
+    hienThiBangLichSu();
+</script>
+</body>
+</html>
