@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hệ thống Đo Góc Cổ - vuthihong</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.2/mqttws31.min.js" type="text/javascript"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background-color: #0c0f12; color: #e2e8f0; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .container { max-width: 1000px; width: 100%; }
@@ -14,8 +14,8 @@
         .card { background: #151922; border-radius: 12px; padding: 20px; flex: 1; min-width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); text-align: center; border-top: 4px solid #3b82f6; transition: transform 0.2s; }
         .card:hover { transform: translateY(-3px); }
         .angle-display { font-size: 2.8rem; font-weight: bold; margin: 10px 0; }
-        #pitchDisplay { color: #a855f7; } /* Màu Tím cho góc dọc */
-        #rollDisplay { color: #3b82f6; }  /* Màu Xanh cho góc ngang */
+        #pitchDisplay { color: #a855f7; }
+        #rollDisplay { color: #3b82f6; }
         .status-txt { font-size: 1.6rem; font-weight: bold; color: #c084fc; margin-top: 10px; }
         .status { font-weight: bold; font-size: 1.1rem; }
         .connected { color: #10b981; }
@@ -67,14 +67,13 @@
 
 <script>
     const mqtt_server = "broker.hivemq.com";
-    const mqtt_port = 443; // Cổng bảo mật chạy cho HTTPS
+    const mqtt_port = 443; // Cổng bảo mật chạy cho HTTPS WSS
     const mqtt_topic = "dogocco_2026/data"; 
 
     let client = new Paho.MQTT.Client(mqtt_server, mqtt_port, "web_" + parseInt(Math.random() * 100, 10));
     let gocChart;
     const maxDataPoints = 35;
 
-    // Cấu hình đồ thị hiển thị cả 2 đường tín hiệu song song
     const ctx = document.getElementById('realtimeChart').getContext('2d');
     gocChart = new Chart(ctx, {
         type: 'line',
@@ -98,7 +97,7 @@
     client.onConnectionLost = onConnectionLost;
     client.onMessageArrived = onMessageArrived;
     
-    // ĐÃ SỬA LỖI CHÍNH: Bật useSSL lên true để bảo mật tương thích GitHub Pages
+    // Kết nối qua giao thức SSL bảo mật bắt buộc của GitHub
     client.connect({onSuccess:onConnect, onFailure:onFailure, useSSL: true});
 
     function onConnect() {
@@ -115,7 +114,6 @@
         document.getElementById('status').className = "status disconnected";
     }
 
-    // Xử lý gói dữ liệu phức hợp gửi về ("Pitch,Roll")
     function onMessageArrived(message) {
         const dataHienTai = message.payloadString.split(',');
         if (dataHienTai.length < 2) return;
@@ -124,11 +122,9 @@
         const roll = parseFloat(dataHienTai[1]);
         const thoiGian = new Date().toLocaleTimeString();
 
-        // 1. Cập nhật số góc lên giao diện
         document.getElementById('pitchDisplay').innerText = pitch.toFixed(2) + '°';
         document.getElementById('rollDisplay').innerText = roll.toFixed(2) + '°';
 
-        // 2. Thuật toán nhận diện tư thế từ góc cổ
         let tuThe = "Bình thường";
         if (pitch < -15) tuThe = "Cúi đầu 🔽";
         else if (pitch > 15) tuThe = "Ngửa đầu 🔼";
@@ -138,7 +134,6 @@
 
         document.getElementById('poseDisplay').innerText = tuThe;
 
-        // 3. Đẩy dữ liệu vẽ biểu đồ động song song
         gocChart.data.labels.push(thoiGian);
         gocChart.data.datasets[0].data.push(pitch);
         gocChart.data.datasets[1].data.push(roll);
@@ -149,7 +144,6 @@
         }
         gocChart.update('none');
 
-        // 4. Lưu lịch sử đo tổng hợp vào bảng
         luuLichSu(thoiGian, pitch, roll, tuThe);
     }
 
